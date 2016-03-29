@@ -160,7 +160,7 @@ class SPARQLWrapper(object):
         self.agent = agent
         self.user = None
         self.passwd = None
-        self.http_auth = BASIC
+        self.http_auth = DIGEST
         self._defaultGraph = defaultGraph
 
         if returnFormat in _allowedFormats:
@@ -522,6 +522,55 @@ class SPARQLWrapper(object):
 
         return request
 
+    def createrequest(self):
+        """Internal method to create request according a HTTP method. Returns a
+            C{urllib2.Request} object of the urllib2 Python library
+            @return: request
+            """
+        request = None
+
+        # protocol details at http://www.w3.org/TR/sparql11-protocol/#query-operation
+        uri = self.endpoint
+
+        if self.method == POST:
+            if self.requestMethod == POSTDIRECTLY:
+                request = urllib2.Request(uri + "?" + self._getRequestEncodedParameters())
+                request.add_header("Content-Type", "'text/rdf+turtle'")
+                # request.add_header("Content-Type", "application/rdf+json")
+                print 'application/rdf+json'
+                # request.add_header("Content-Type", "application/json")
+                request.data = self.queryString.encode('UTF-8')
+            else:  # URL-encoded
+                request = urllib2.Request(uri)
+                print 'application/x-www-form-urlencoded'
+                request.add_header("Content-Type", "application/x-www-form-urlencoded")
+                request.data = self._getRequestEncodedParameters(("query", self.queryString)).encode('ascii')
+        else:  # GET
+            print 'a get'
+            request = urllib2.Request(uri + "?" + self._getRequestEncodedParameters(("query", self.queryString)))
+
+        request.add_header("User-Agent", self.agent)
+        request.add_header("Accept", self._getAcceptHeader())
+        request.add_header("Content-Type", self._getAcceptHeader())
+        if self.user and self.passwd:
+            if self.http_auth == BASIC:
+                credentials = "%s:%s" % (self.user, self.passwd)
+                request.add_header("Authorization",
+                                   "Basic %s" % base64.b64encode(credentials.encode('utf-8')).decode('utf-8'))
+            if self.http_auth == DIGEST:
+                realm = "SPARQL"
+                pwd_mgr = urllib2.HTTPPasswordMgr()
+                pwd_mgr.add_password(realm, uri, self.user, self.passwd)
+                opener = urllib2.build_opener()
+                opener.add_handler(urllib2.HTTPDigestAuthHandler(pwd_mgr))
+                urllib2.install_opener(opener)
+            else:
+                valid_types = ", ".join(_allowedAuth)
+                raise NotImplementedError("Expecting one of: {0}, but received: {1}".format(valid_types,
+                                                                                            self.http_auth))
+
+        return request
+
     def _query(self):
         """Internal method to execute the query. Returns the output of the
         C{urllib2.urlopen} method of the standard Python library
@@ -531,7 +580,7 @@ class SPARQLWrapper(object):
         if self.timeout:
             socket.setdefaulttimeout(self.timeout)
 
-        request = self._createRequest()
+        request = self.createrequest()
 
         try:
             response = urlopener(request)
